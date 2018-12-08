@@ -1,3 +1,4 @@
+//Inspired by https://github.com/keras-team/keras/blob/master/examples/lstm_seq2seq.py#L84
 //Data producing part
 
 from google.colab import drive
