@@ -1,0 +1,440 @@
+//Data producing part
+
+from google.colab import drive
+
+drive.mount('/content/gdrive')
+
+
+import numpy as np
+import scipy.io.wavfile
+from scipy.fftpack import dct
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import random
+
+noise_data_path = '/content/gdrive/My Drive/data/noise_original/noise.wav' 
+sample_rate, noise_signal = scipy.io.wavfile.read(noise_data_path) # noise sample rate: 8000
+
+title_first = list(range(0,10))
+title_second = ['jackson','nicolas','theo']
+title_third = list(range(0,50))
+
+noise_start_points = list(range(3000000,3001000)) # length of noise : 4166217
+
+max_len_audio = 8281 # audio signal의 최대 길이는 7038 (only for jackson) theo까지 포함하면 8281
+
+original_data_set = np.zeros([10,3,50,max_len_audio])
+original_data_length = np.zeros([10,3,50]);
+
+# print(np.shape(original_data_set))
+# print(np.append(original_data_set[0,0,0],[1,2,3,4]))
+
+range_k = 50;
+
+max = 0
+for i in range(10):
+  print('i:',i)
+  for j in range(1): # 우선 jackson만으로 데이터를 생성
+    name = ''
+    
+    if j == 0:
+      name = 'jackson'
+    if j == 1:
+      name = 'nicolas'
+    if j == 2 :
+      name = 'theo'
+      
+    for k in range(range_k):
+      
+      title = str(i) + '_' + name + '_' + str(k) + '.wav'
+      data_path = '/content/gdrive/My Drive/data/recordings/' + title
+      sample_rate, signal = scipy.io.wavfile.read(data_path)
+      
+#       print(sample_rate)
+      
+#       if(len(signal)> max):
+#         max = len(signal)
+#         print("max:",max)
+      
+      max_of_signal = np.max(np.abs(signal)); 
+      signal = signal / max_of_signal * 10000
+      
+      original_data_length[i,j,k] = len(signal)
+      
+      for l in range(len(signal)):
+        original_data_set[i,j,k,l] = signal[l]
+        
+      
+print("original data loaded")
+
+
+num_of_samples_to_produce = 4010
+
+offset = 0
+
+
+for itr in range(offset,offset+num_of_samples_to_produce):
+#   j = random.choice(range(0,3))
+  j = 0 # 우선 jackson으로만 testset 구성
+  sample_signal = np.array([])
+
+  num_of_samples_to_concatenate = random.choice(range(5,10))
+  
+  for m in range(num_of_samples_to_concatenate):
+    i = random.choice(range(0,10))
+    k = random.choice(range(0,range_k))
+    sample_signal = np.append(sample_signal, original_data_set[i,j,k][1:original_data_length[i,j,k].astype(np.int16)])
+    empty_size = random.choice(range(0,5000))
+    empty = np.zeros([empty_size])
+    sample_signal = np.append(sample_signal,empty)
+    
+  sample_signal = sample_signal.astype(np.int16)
+  
+  noise_start_point = random.choice(noise_start_points)
+  len_of_sample_signal = len(sample_signal)
+  noised_sample = noise_signal[list(range(noise_start_point, noise_start_point + len_of_sample_signal))]  + sample_signal
+  
+  print("itr: ",itr);
+  scipy.io.wavfile.write("/content/gdrive/My Drive/data/random_samples/sample_"+str(itr)+".wav", sample_rate,sample_signal)
+  scipy.io.wavfile.write("/content/gdrive/My Drive/data/random_samples/sample_noised_"+str(itr)+".wav", sample_rate,noised_sample)
+  
+  //Learning part
+  from google.colab import drive
+
+drive.mount('/content/gdrive')
+import scipy.io.wavfile
+import random
+  
+from __future__ import print_function
+
+from keras.models import Model
+# from keras import backend as K
+from keras.layers import Input, LSTM, Dense
+import numpy as np
+
+# print(K.tensorflow_backend._get_available_gpus())
+
+total_num_samples = 4000
+
+num_chunks = 200
+num_points = 200
+
+encoder_input_data = np.zeros((total_num_samples,num_chunks,num_points))
+decoder_input_data = np.zeros((total_num_samples,num_chunks,num_points))
+decoder_target_data = np.zeros((total_num_samples,num_chunks,num_points))
+
+i = 0 
+
+while i < total_num_samples:
+  if (i%(total_num_samples/100)) == 0:
+    print( i * 100 /(total_num_samples), "% loaded ..." )
+  input_data_path = '/content/gdrive/My Drive/data/random_samples/sample_noised_'+str(i)+".wav"
+  target_data_path = '/content/gdrive/My Drive/data/random_samples/sample_'+str(i)+".wav"
+  sample_rate, input_data = scipy.io.wavfile.read(input_data_path)
+  sample_rate, target_data = scipy.io.wavfile.read(target_data_path)
+  
+  len_of_data = len(input_data)
+  
+  j = 0
+  k = 0
+  
+  while j < num_chunks and (num_points*j + k) < len_of_data :
+   
+    while k < num_points and (num_points*j + k) < len_of_data:
+      encoder_input_data[i,j,k] = input_data[num_points*j+k]/10000
+      decoder_input_data[i,j,k] = input_data[num_points*j+k]/10000
+      decoder_target_data[i,j,k] = target_data[num_points*j+k]/10000
+      k += 1
+    j +=1
+    k = 0
+  i += 1
+    
+print("All training data is loaded")
+
+
+# import 
+# device_name = tf.test.gpu_device_name()
+# if device_name != '/device:GPU:0':
+#   raise SystemError('GPU device not found')
+# print('Found GPU at: {}'.format(device_name))
+
+
+num_samples = 4000  # Number of samples to train on.
+batch_size = 16 # Batch size for training.
+epochs = 50  # Number of epochs to train for.
+latent_dim = 1024 # Latent dimensionality of the encoding space.
+
+act = 'linear'    
+los = 'mean_absolute_error'
+    
+    # Define an input sequence and process it.
+encoder_inputs = Input(shape=(None, num_points))
+encoder = LSTM(latent_dim, return_state=True)
+encoder_outputs, state_h, state_c = encoder(encoder_inputs)
+# We discard `encoder_outputs` and only keep the states.
+encoder_states = [state_h, state_c]
+
+# Set up the decoder, using `encoder_states` as initial state.
+decoder_inputs = Input(shape=(None, num_points))
+# We set up our decoder to return full output sequences,
+# and to return internal states as well. We don't use the
+# return states in the training model, but we will use them in inference.
+decoder_lstm = LSTM(latent_dim, return_sequences=True, return_state=True)
+decoder_outputs, _, _ = decoder_lstm(decoder_inputs,
+                                     initial_state=encoder_states)
+decoder_dense = Dense(num_points, activation=act)
+decoder_outputs = decoder_dense(decoder_outputs)
+
+# Define the model that will turn
+# `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
+model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+
+# Run training
+model.compile(optimizer='rmsprop', loss= los)
+model.fit([encoder_input_data[range(0,num_samples)], decoder_input_data[range(0,num_samples)]], decoder_target_data[range(0,num_samples)],
+          batch_size=batch_size,
+          epochs=epochs,
+          validation_split=0.08)
+# Save model
+model.save('s2s.h5')
+ 
+#@title Default title text
+encoder_model = Model(encoder_inputs, encoder_states)
+    
+decoder_state_input_h = Input(shape=(latent_dim,))
+decoder_state_input_c = Input(shape=(latent_dim,))
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+decoder_outputs, state_h, state_c = decoder_lstm(
+    decoder_inputs, initial_state=decoder_states_inputs)
+decoder_states = [state_h, state_c]
+decoder_outputs = decoder_dense(decoder_outputs)
+decoder_model = Model(
+     [decoder_inputs] + decoder_states_inputs,
+    [decoder_outputs] + decoder_states)
+
+
+first_test_set_idx = 3990
+last_test_set_idx = 4093
+
+num_chunks = 600
+num_points = 200
+
+for idx in range(first_test_set_idx,last_test_set_idx + 1):
+  encoder_test_data = np.zeros((1,num_chunks,num_points))
+ 
+  input_data_path = '/content/gdrive/My Drive/data/random_samples/sample_noised_'+str(idx)+".wav"
+
+  sample_rate, input_data = scipy.io.wavfile.read(input_data_path)
+
+  len_of_data = len(input_data)
+
+  j = 0
+  k = 0
+
+  while j < num_chunks and (num_points*j + k) < len_of_data:
+
+    while k < num_points and (num_points*j + k) < len_of_data:
+      encoder_test_data[0,j,k] = input_data[num_points*j+k]/10000
+      k += 1
+    j +=1
+    k = 0
+  j = 0
+
+
+  # Encode the input as state vectors.
+  states_value = encoder_model.predict(encoder_test_data[0:1])
+
+  output, h, c = decoder_model.predict([encoder_test_data[0:1]] + states_value)
+
+  ouput = (output.flatten() * 10000).astype(np.int16)
+  input = (encoder_test_data.flatten()*10000).astype(np.int16)
+  
+  scipy.io.wavfile.write('/content/gdrive/My Drive/data/random_results/result_' + str(idx) + ".wav",sample_rate,ouput)
+  scipy.io.wavfile.write('/content/gdrive/My Drive/data/random_results/input_' +str(idx) + ".wav",sample_rate,input)
+
+  
+print('All task is done')
+
+//analysis part
+//get result from google drive
+from google.colab import drive
+
+drive.mount('/content/gdrive')
+//analysis
+import numpy as np
+import scipy.io.wavfile
+import matplotlib.pyplot as plt
+
+
+mse_improvement_ratios = np.zeros([104])
+SNR_ratios = np.zeros([104])
+
+# mse_improvement_ratios, SNR_ratios 생성
+for i in range(3990,4094):
+  input_path = '/content/gdrive/My Drive/data/random_results/input_'+str(i)+'.wav' 
+  result_path = '/content/gdrive/My Drive/data/random_results/result_'+str(i)+'.wav' 
+  target_path = '/content/gdrive/My Drive/data/random_samples/sample_'+str(i)+'.wav' 
+
+  sample_rate, input_signal = scipy.io.wavfile.read(input_path) # 더러운거
+  sample_rate, result_signal = scipy.io.wavfile.read(result_path) # 모델 통과한거
+  sample_rate, target_signal = scipy.io.wavfile.read(target_path) # 깨끗한거
+  
+  len = np.minimum(np.size(target_signal),np.size(input_signal));
+
+  input_signal = input_signal.astype(np.int64)[0:len]
+  target_signal = target_signal.astype(np.int64)[0:len]
+  result_signal = result_signal.astype(np.int64)[0:len]
+# mean square error
+  mse_diff = ((input_signal - target_signal)**2).mean(axis=0) - ((result_signal - target_signal)**2).mean(axis=0) 
+  mse_improvement_ratio = mse_diff /((input_signal - target_signal)**2).mean(axis=0)
+#   print(str(i)+"번 째")
+#   print("노이즈 섞인 샘플:,", ((input_signal - target_signal)**2).mean(axis=0)) # 노이즈 섞인 샘플 - 순수 샘플 : 이만큼 차이나는게
+#   print("필터 거친 샘플:",((result_signal - target_signal)**2).mean(axis=0)) # 필터를 거친 샘플 - 순수 샘플 : 이정도 차이로 줄어들었다. 즉 순수 목소리 파형과 비슷해짐
+
+# SNR
+  target_power = np.mean(np.square(target_signal)) #신호의 세기
+  input_noise_signal = input_signal - target_signal;
+  input_noise_power = np.mean(np.square(input_noise_signal)) #input noise 세기
+  output_noise_signal = result_signal - target_signal
+  output_noise_power = np.mean(np.square(output_noise_signal)) #output noise 세기
+
+  SNR_in_input = target_power/input_noise_power
+  SNR_in_output = target_power/output_noise_power
+
+  SNR_ratio = SNR_in_output/SNR_in_input
+  
+#   print(str(i)+"번 째 MSE 개선율", mse_improvement_ratio, "          입출력 SNR_ratio", SNR_ratio)
+  
+  mse_improvement_ratios[i-3990] = mse_improvement_ratio
+  SNR_ratios[i-3990] = SNR_ratio
+
+
+# 전체 평균, 분산
+print("전체 구간")
+print("MSE 개선율 평균", np.mean(mse_improvement_ratios), "           분산", np.var(mse_improvement_ratios))
+print("입출력 SNR_ratio 평균", np.mean(SNR_ratios), "          분산", np.var(SNR_ratios))
+
+#전체 Graph
+plt.title('MSE_improvement_ratios for each data')
+plt.xlabel('data')
+plt.ylabel('MSE_improvement_ratios')
+t = np.arange(3990, 4093, 1)
+plt.text(4010, -.6, r'$\mu='+str(np.mean(mse_improvement_ratios))+',\ \sigma='+str(np.var(mse_improvement_ratios))+'$')
+plt.axis([3989, 4094, min(mse_improvement_ratios)-1, max(mse_improvement_ratios)+1])
+plt.plot(t, mse_improvement_ratios[t-3990], 'g^')
+plt.show()
+
+plt.title('SNR_ratios for each data')
+plt.xlabel('data')
+plt.ylabel('SNR_ratios')
+t = np.arange(3990, 4093, 1)
+plt.text(4010, 1.5, r'$\mu='+str(np.mean(SNR_ratios))+',\ \sigma='+str(np.var(SNR_ratios))+'$')
+plt.axis([3989, 4094, min(SNR_ratios)-1, max(SNR_ratios)+1])
+plt.plot(t, SNR_ratios[t-3990], 'bs')
+plt.show()
+
+by_section_mse_improvement_ratio_mean = np.zeros([11])
+by_section_mse_improvement_ratio_var = np.zeros([11])
+by_section_SNR_ratio_mean = np.zeros([11])
+by_section_SNR_ratio_var = np.zeros([11])
+local_name=['Jackson', 'Jackson', 'Jackson length x 2', 'Theo', 'Theo length x 2', 'Jackson noise x 1.5', 'Jackson noise x 2', 'Jackson noise x 3', 'Hyungoo', 'Hyunjoo length x 2', 'Hyungjoo arbitrary sentence']
+# 구간별 평균, 분산
+for i in range(0,11):
+  local_mse_improvement_ratios = np.zeros([10])
+  local_SNR_ratios = np.zeros([10])
+  for j in range(0,10):
+    if 10*i+j<104:
+      local_mse_improvement_ratios[j] = mse_improvement_ratios[10*i+j]
+      local_SNR_ratios[j] = SNR_ratios[10*i+j]
+#   print(str(3990+i*10)+"구간")
+#   if i==10: # 마지막엔 4개만 평균, 분산내기
+#     print("MSE 개선율 평균", np.mean(local_mse_improvement_ratios[:4]), "          분산", np.var(local_mse_improvement_ratios[:4]))
+#     print("입출력 SNR_ratio 평균", np.mean(local_SNR_ratios[:4]), "          분산", np.var(local_SNR_ratios[:4]))
+#   else:
+#     print("MSE 개선율 평균", np.mean(local_mse_improvement_ratios), "          분산", np.var(local_mse_improvement_ratios))
+#     print("입출력 SNR_ratio 평균", np.mean(local_SNR_ratios), "          분산", np.var(local_SNR_ratios))
+
+    
+#   local graph
+#   plt.title('MSE_improvement_ratios for '+str(local_name[i])+' data') # MSE local graph
+#   plt.xlabel(str(local_name[i])+' data')
+#   plt.ylabel('MSE_improvement_ratios')
+#   t = np.arange(0, 10, 1)
+#   if i==10: # 마지막엔 4개만 평균, 분산내기
+#     plt.text(2, -0.6, r'$\mu='+str(np.mean(local_mse_improvement_ratios[:4]))+',\ \sigma='+str(np.var(local_mse_improvement_ratios[:4]))+'$')
+#     plt.axis([-1, 11, min(mse_improvement_ratios)-1, max(mse_improvement_ratios)+1])
+#     plt.plot(t, local_mse_improvement_ratios[t], 'g^')
+#     plt.show()    
+#   else:
+#     plt.text(2, -0.6, r'$\mu='+str(np.mean(local_mse_improvement_ratios[:4]))+',\ \sigma='+str(np.var(local_mse_improvement_ratios[:4]))+'$')
+#     plt.axis([-1, 11, min(mse_improvement_ratios)-1, max(mse_improvement_ratios)+1])
+#     plt.plot(t, local_mse_improvement_ratios[t], 'g^')
+#     plt.show()
+  
+#   plt.title('SNR_ratios for '+str(local_name[i])+' data') # SNR local graph
+#   plt.xlabel(str(local_name[i])+' data')
+#   plt.ylabel('SNR_ratios')
+#   t = np.arange(0, 10, 1)
+#   if i==10: # 마지막엔 4개만 평균, 분산내기
+#     plt.text(2, 1.5, r'$\mu='+str(np.mean(local_SNR_ratios[:4]))+',\ \sigma='+str(np.var(local_SNR_ratios[:4]))+'$')
+#     plt.axis([-1, 11, min(SNR_ratios)-1, max(SNR_ratios)+1])
+#     plt.plot(t, local_SNR_ratios[t], 'bs')
+#     plt.show()    
+#   else:
+#     plt.text(2, 1.5, r'$\mu='+str(np.mean(local_SNR_ratios))+',\ \sigma='+str(np.var(local_SNR_ratios))+'$')
+#     plt.axis([-1, 11, min(SNR_ratios)-1, max(SNR_ratios)+1])
+#     plt.plot(t, local_SNR_ratios[t], 'bs')
+#     plt.show()
+  
+  by_section_mse_improvement_ratio_mean[i] = np.mean(local_mse_improvement_ratios)
+  by_section_mse_improvement_ratio_var[i] = np.var(local_mse_improvement_ratios)
+  by_section_SNR_ratio_mean[i] = np.mean(local_SNR_ratios)
+  by_section_SNR_ratio_var[i] = np.var(local_SNR_ratios)
+
+
+#구간별 대푯값 Graph
+print("각 구간은 0부터 10까지 "+str(local_name)+" 들을 Input으로 갖습니다.")
+
+# by_section_mse_improvement_ratio_mean
+print('구간별 MSE 개선율 평균')
+print(by_section_mse_improvement_ratio_mean)
+plt.title('by_section_MSE_improvement_ratio_mean')
+plt.xlabel('section')
+plt.ylabel('MSE_improvement_ratios_mean')
+t = np.arange(0, 11, 1)
+plt.axis([-1, 11, min(mse_improvement_ratios)-1, max(mse_improvement_ratios)+1])
+plt.plot(t, by_section_mse_improvement_ratio_mean[t], 'g^')
+plt.show()
+
+# by_section_mse_improvement_ratio_var
+print('구간별 MSE 개선율 분산')
+print(by_section_mse_improvement_ratio_var)
+plt.title('by_section_MSE_improvement_ratio_var')
+plt.xlabel('section')
+plt.ylabel('MSE_improvement_ratios_var')
+t = np.arange(0, 11, 1)
+plt.axis([-1, 11, min(by_section_mse_improvement_ratio_var)-1, max(by_section_mse_improvement_ratio_var)+1])
+plt.plot(t, by_section_mse_improvement_ratio_var[t], 'g^')
+plt.show()
+
+# by_section_SNR_ratio_mean
+print('구간별 SNR 비율 평균')
+print(by_section_SNR_ratio_mean)
+plt.title('by_section_SNR_ratio_mean')
+plt.xlabel('section')
+plt.ylabel('SNR_ratio_mean')
+t = np.arange(0, 11, 1)
+plt.axis([-1, 11, min(SNR_ratios)-1, max(SNR_ratios)+1])
+plt.plot(t, by_section_SNR_ratio_mean[t], 'bs')
+plt.show()
+
+# by_section_SNR_ratio_var
+print('구간별 SNR 비율 분산')
+print(by_section_SNR_ratio_var)
+plt.title('by_section_SNR_ratio_var')
+plt.xlabel('section')
+plt.ylabel('SNR_ratio_var')
+t = np.arange(0, 11, 1)
+plt.axis([-1, 11, min(by_section_SNR_ratio_var)-1, max(by_section_SNR_ratio_var)+1])
+plt.plot(t, by_section_SNR_ratio_var[t], 'bs')
+plt.show()
